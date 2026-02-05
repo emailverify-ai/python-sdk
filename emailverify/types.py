@@ -4,43 +4,66 @@ from dataclasses import dataclass
 from typing import List, Literal, Optional
 
 
-VerificationStatus = Literal["valid", "invalid", "unknown", "accept_all"]
+VerificationStatus = Literal["valid", "invalid", "unknown", "risky", "disposable", "catchall", "role"]
 JobStatus = Literal["pending", "processing", "completed", "failed"]
-WebhookEvent = Literal[
-    "verification.completed", "bulk.completed", "bulk.failed", "credits.low"
-]
+WebhookEvent = Literal["file.completed", "file.failed"]
+DomainReputation = Literal["high", "medium", "low", "unknown"]
 
 
 @dataclass
 class VerificationResult:
     """Detailed verification result."""
 
-    deliverable: bool
-    valid_format: bool
-    valid_domain: bool
-    valid_mx: bool
-    disposable: bool
-    role: bool
-    catchall: bool
-    free: bool
-    smtp_valid: bool
-
-
-@dataclass
-class VerifyResponse:
-    """Response from single email verification."""
-
     email: str
     status: VerificationStatus
-    result: VerificationResult
     score: float
-    reason: Optional[str]
+    is_deliverable: bool
+    is_disposable: bool
+    is_catchall: bool
+    is_role: bool
+    is_free: bool
+    domain: str
+    domain_age: Optional[int]
+    mx_records: List[str]
+    domain_reputation: Optional[DomainReputation]
+    smtp_check: bool
+    reason: str
+    suggestion: Optional[str]
+    response_time: int
     credits_used: int
 
 
 @dataclass
-class BulkJobResponse:
-    """Response from bulk verification job."""
+class BulkVerificationResult:
+    """Result from synchronous bulk verification."""
+
+    email: str
+    status: VerificationStatus
+    score: float
+    is_deliverable: bool
+    is_disposable: bool
+    is_catchall: bool
+    is_role: bool
+    is_free: bool
+    domain: str
+    reason: str
+
+
+@dataclass
+class BulkVerifyResponse:
+    """Response from synchronous bulk verification."""
+
+    results: List[BulkVerificationResult]
+    total_emails: int
+    valid_emails: int
+    invalid_emails: int
+    credits_used: int
+    process_time: int
+
+
+@dataclass
+class FileJobResponse:
+    """Response from file verification job."""
 
     job_id: str
     status: JobStatus
@@ -53,47 +76,48 @@ class BulkJobResponse:
     created_at: str
     completed_at: Optional[str] = None
     progress_percent: Optional[int] = None
+    filename: Optional[str] = None
 
 
 @dataclass
-class BulkResultItem:
-    """Single result item from bulk verification."""
+class FileResultItem:
+    """Single result item from file verification."""
 
     email: str
     status: VerificationStatus
-    result: dict
     score: float
+    is_deliverable: bool
+    is_disposable: bool
+    is_catchall: bool
+    is_role: bool
+    is_free: bool
+    domain: str
+    reason: str
+    original_row: Optional[dict] = None
 
 
 @dataclass
-class BulkResultsResponse:
-    """Response from bulk job results."""
+class FileResultsResponse:
+    """Response from file job results."""
 
     job_id: str
     total: int
     limit: int
     offset: int
-    results: List[BulkResultItem]
-
-
-@dataclass
-class RateLimit:
-    """Rate limit information."""
-
-    requests_per_hour: int
-    remaining: int
+    results: List[FileResultItem]
 
 
 @dataclass
 class CreditsResponse:
     """Response from credits endpoint."""
 
-    available: int
-    used: int
-    total: int
-    plan: str
-    resets_at: str
-    rate_limit: RateLimit
+    account_id: str
+    api_key_id: str
+    api_key_name: str
+    credits_balance: int
+    credits_consumed: int
+    credits_added: int
+    last_updated: str
 
 
 @dataclass
@@ -103,4 +127,15 @@ class Webhook:
     id: str
     url: str
     events: List[WebhookEvent]
+    secret: Optional[str]
+    is_active: bool
     created_at: str
+    updated_at: str
+
+
+@dataclass
+class HealthCheckResponse:
+    """Response from health check endpoint."""
+
+    status: str
+    version: Optional[str] = None

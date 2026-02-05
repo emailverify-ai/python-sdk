@@ -19,7 +19,8 @@ client = EmailVerify(api_key="your-api-key")
 
 # Verify a single email
 result = client.verify("user@example.com")
-print(result.status)  # 'valid', 'invalid', 'unknown', or 'accept_all'
+print(result.status)  # 'valid', 'invalid', 'unknown', 'risky', 'disposable', 'catchall', 'role'
+print(result.is_deliverable)  # True or False
 ```
 
 ## Configuration
@@ -35,49 +36,94 @@ client = EmailVerify(
 
 ## Single Email Verification
 
+Uses the `/verify/single` endpoint:
+
 ```python
 result = client.verify(
     email="user@example.com",
-    smtp_check=True,  # Optional: Perform SMTP verification (default: True)
-    timeout=5000,     # Optional: Verification timeout in ms
+    check_smtp=True,  # Optional: Perform SMTP verification (default: True)
 )
 
+# Flat response structure
 print(result.email)           # 'user@example.com'
-print(result.status)          # 'valid'
+print(result.status)          # 'valid', 'invalid', 'unknown', 'risky', 'disposable', 'catchall', 'role'
 print(result.score)           # 0.95
-print(result.result.deliverable)  # True
-print(result.result.disposable)   # False
+print(result.is_deliverable)  # True
+print(result.is_disposable)   # False
+print(result.is_catchall)     # False
+print(result.is_role)         # False
+print(result.is_free)         # True
+print(result.domain)          # 'example.com'
+print(result.reason)          # 'Valid email address'
+print(result.smtp_check)      # True (whether SMTP was performed)
+print(result.credits_used)    # 1
 ```
 
-## Bulk Email Verification
+## Bulk Email Verification (Synchronous)
+
+Verify up to 50 emails synchronously using `verify_bulk()`:
 
 ```python
-# Submit a bulk verification job
-job = client.verify_bulk(
+# Synchronous bulk verification (max 50 emails)
+response = client.verify_bulk(
     emails=["user1@example.com", "user2@example.com", "user3@example.com"],
-    smtp_check=True,
-    webhook_url="https://your-app.com/webhooks/emailverify",  # Optional
+    check_smtp=True,  # Optional
 )
 
-print(job.job_id)  # 'job_abc123xyz'
+# Returns BulkVerifyResponse directly
+print(f"Total: {response.total}")
+print(f"Credits used: {response.credits_used}")
 
-# Check job status
-status = client.get_bulk_job_status(job.job_id)
-print(status.progress_percent)  # 45
+for result in response.results:
+    print(f"{result.email}: {result.status}")
+    print(f"  Deliverable: {result.is_deliverable}")
+    print(f"  Disposable: {result.is_disposable}")
+    print(f"  Catchall: {result.is_catchall}")
+    print(f"  Role: {result.is_role}")
+```
+
+## File Upload (Async Verification)
+
+For large lists, use `upload_file()` for asynchronous file verification:
+
+```python
+# Upload a file for async verification
+job = client.upload_file(
+    file_path="emails.csv",
+    check_smtp=True,
+    email_column="email",        # Column name for CSV files
+    preserve_original=True,      # Keep original columns in results
+)
+
+print(f"Job ID: {job.job_id}")
+print(f"Status: {job.status}")
+
+# Get job status (with optional long-polling)
+status = client.get_file_job_status(
+    job_id=job.job_id,
+    timeout=60,  # Long-poll for up to 60 seconds (0-300)
+)
+print(f"Progress: {status.progress_percent}%")
 
 # Wait for completion (polling)
-completed = client.wait_for_bulk_job_completion(
+completed = client.wait_for_file_job(
     job_id=job.job_id,
     poll_interval=5.0,  # seconds
     max_wait=600.0,     # seconds
 )
 
-# Get results
-results = client.get_bulk_job_results(
+# Get results with filter options
+results = client.get_file_job_results(
     job_id=job.job_id,
     limit=100,
     offset=0,
-    status="valid",  # Optional: filter by status
+    valid=True,       # Include valid emails
+    invalid=True,     # Include invalid emails
+    unknown=True,     # Include unknown emails
+    risky=True,       # Include risky emails
+    disposable=True,  # Include disposable emails
+    catchall=True,    # Include catch-all emails
+    role=True,        # Include role-based emails
 )
 
 for item in results.results:
@@ -92,33 +138,58 @@ from emailverify import AsyncEmailVerify
 
 async def main():
     async with AsyncEmailVerify(api_key="your-api-key") as client:
+        # Single verification
         result = await client.verify("user@example.com")
         print(result.status)
 
+        # Bulk verification
+        response = await client.verify_bulk([
+            "user1@example.com",
+            "user2@example.com"
+        ])
+        for r in response.results:
+            print(f"{r.email}: {r.status}")
+
 asyncio.run(main())
+```
+
+## Health Check
+
+Check API health status (no authentication required):
+
+```python
+health = client.health_check()
+print(health.status)   # 'ok'
+print(health.version)  # API version
 ```
 
 ## Credits
 
 ```python
 credits = client.get_credits()
-print(credits.available)  # 9500
-print(credits.plan)       # 'Professional'
-print(credits.rate_limit.remaining)  # 9850
+print(credits.credits_balance)   # Available credits
+print(credits.credits_consumed)  # Credits used
+print(credits.credits_added)     # Total credits added
+print(credits.api_key_name)      # API key name
 ```
 
 ## Webhooks
+
+Webhooks support events: `file.completed`, `file.failed`
 
 ```python
 # Create a webhook
 webhook = client.create_webhook(
     url="https://your-app.com/webhooks/emailverify",
-    events=["verification.completed", "bulk.completed"],
-    secret="your-webhook-secret",
+    events=["file.completed", "file.failed"],
 )
+print(f"Webhook ID: {webhook.id}")
+print(f"Secret: {webhook.secret}")  # Save this for signature verification
 
 # List webhooks
 webhooks = client.list_webhooks()
+for wh in webhooks:
+    print(f"{wh.id}: {wh.url}")
 
 # Delete a webhook
 client.delete_webhook(webhook.id)
@@ -156,6 +227,8 @@ except ValidationError as e:
     print(f"Invalid input: {e.message}")
 except InsufficientCreditsError:
     print("Not enough credits")
+except NotFoundError:
+    print("Resource not found")
 except TimeoutError:
     print("Request timed out")
 ```
@@ -174,12 +247,33 @@ with EmailVerify(api_key="your-api-key") as client:
 This SDK includes full type annotations for IDE support and type checking.
 
 ```python
-from emailverify import VerifyResponse, BulkJobResponse, CreditsResponse
+from emailverify import (
+    VerificationResult,
+    BulkVerifyResponse,
+    FileJobResponse,
+    CreditsResponse,
+    VerificationStatus,
+)
 
-def process_result(result: VerifyResponse) -> None:
+def process_result(result: VerificationResult) -> None:
     if result.status == "valid":
         print(f"Email {result.email} is valid")
+
+    if result.is_deliverable and not result.is_disposable:
+        print("Safe to send to this email")
 ```
+
+## Status Values
+
+The verification status can be one of:
+
+- `valid` - Email is valid and deliverable
+- `invalid` - Email is invalid or does not exist
+- `unknown` - Could not determine status
+- `risky` - Email exists but may have delivery issues
+- `disposable` - Temporary/disposable email address
+- `catchall` - Domain accepts all emails (catch-all)
+- `role` - Role-based email (e.g., info@, support@)
 
 ## License
 

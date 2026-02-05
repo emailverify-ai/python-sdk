@@ -51,7 +51,7 @@ class InsufficientCreditsError(EmailVerifyError):
     """Raised when there are not enough credits."""
 
     def __init__(self, message: str = "Insufficient credits") -> None:
-        super().__init__(message, "INSUFFICIENT_CREDITS", 403)
+        super().__init__(message, "INSUFFICIENT_CREDITS", 402)
 
 
 class NotFoundError(EmailVerifyError):
